@@ -133,6 +133,10 @@ def get(name):
 def overview(name):
 	server = poly_get_doc(["Server", "Database Server"], name)
 	plan = frappe.get_doc("Server Plan", server.plan) if server.plan else None
+	if plan:
+		# override plan disk size with the actual disk size
+		# TODO: Remove this once we remove old dashboard
+		plan.disk = frappe.db.get_value("Virtual Machine", name, "disk_size")
 
 	return {
 		"plan": plan if plan else None,
@@ -169,7 +173,9 @@ def new(server):
 	)
 
 	proxy_server = frappe.get_all(
-		"Proxy Server", {"status": "Active", "cluster": cluster.name}, limit=1
+		"Proxy Server",
+		{"status": "Active", "cluster": cluster.name, "is_primary": True},
+		limit=1,
 	)[0]
 
 	# to be used by app server

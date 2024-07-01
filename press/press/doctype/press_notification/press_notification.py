@@ -4,6 +4,8 @@
 import frappe
 from frappe.model.document import Document
 
+from press.api.client import dashboard_whitelist
+
 
 class PressNotification(Document):
 	# begin: auto-generated types
@@ -49,8 +51,6 @@ class PressNotification(Document):
 		"assistance_url",
 	]
 
-	dashboard_actions = ["mark_as_addressed"]
-
 	def after_insert(self):
 		if frappe.local.dev_server:
 			return
@@ -76,12 +76,16 @@ class PressNotification(Document):
 			},
 		)
 
-	@frappe.whitelist()
+	@dashboard_whitelist()
 	def mark_as_addressed(self):
 		self.read = True
 		self.is_addressed = True
 		self.save()
 		frappe.db.commit()
+
+	@dashboard_whitelist()
+	def mark_as_read(self):
+		self.db_set("read", True)
 
 
 def create_new_notification(team, type, document_type, document_name, message):

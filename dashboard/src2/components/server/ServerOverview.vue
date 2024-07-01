@@ -4,7 +4,7 @@
 		class="grid grid-cols-1 items-start gap-5 sm:grid-cols-2"
 	>
 		<div
-			v-for="server in ['Server', 'Database Server']"
+			v-for="server in ['Server', 'Database Server', 'Replication Server']"
 			class="col-span-1 rounded-md border lg:col-span-2"
 		>
 			<div class="grid grid-cols-2 lg:grid-cols-4">
@@ -15,17 +15,20 @@
 					>
 						<div
 							v-if="d.type === 'header'"
-							class="flex items-center justify-between"
+							class="m-2 flex items-center justify-between"
 						>
 							<div
 								v-if="d.type === 'header'"
 								class="mt-2 flex flex-col space-y-2"
 							>
 								<div class="text-base text-gray-700">{{ d.label }}</div>
-								<div>
+								<div class="flex items-center space-x-2">
 									<div class="text-base text-gray-900">
 										{{ d.value }}
 									</div>
+									<Tooltip v-if="d.help" :text="d.help">
+										<i-lucide-info class="h-4 w-4 text-gray-500" />
+									</Tooltip>
 								</div>
 							</div>
 							<Button
@@ -35,15 +38,22 @@
 							/>
 						</div>
 						<div v-else-if="d.type === 'progress'">
-							<div class="text-base text-gray-700">{{ d.label }}</div>
+							<div class="flex items-center justify-between space-x-2">
+								<div class="text-base text-gray-700">{{ d.label }}</div>
+								<Button v-if="d.action" v-bind="d.action" />
+								<div v-else class="h-8" />
+							</div>
 							<div class="mt-2">
-								<Progress size="md" :value="d.progress_value" />
-								<div>
+								<Progress size="md" :value="d.progress_value || 0" />
+								<div class="flex space-x-2">
 									<div class="mt-2 flex justify-between">
 										<div class="text-sm text-gray-600">
 											{{ d.value }}
 										</div>
 									</div>
+									<Tooltip v-if="d.help" :text="d.help">
+										<i-lucide-info class="mt-2 h-4 w-4 text-gray-500" />
+									</Tooltip>
 								</div>
 							</div>
 						</div>
@@ -73,9 +83,10 @@
 </template>
 
 <script>
+import { toast } from 'vue-sonner';
 import { h, defineAsyncComponent } from 'vue';
 import { getCachedDocumentResource } from 'frappe-ui';
-import { renderDialog } from '../../utils/components';
+import { confirmDialog, renderDialog } from '../../utils/components';
 import ServerPlansDialog from './ServerPlansDialog.vue';
 import ServerLoadAverage from './ServerLoadAverage.vue';
 import { getDocResource } from '../../utils/resource';
@@ -107,29 +118,34 @@ export default {
 
 			let formatBytes = v => this.$format.bytes(v, 0, 2);
 
-			let currentPlan =
+			let doc =
 				serverType === 'Server'
-					? this.$appServer.doc.current_plan
-					: this.$dbServer.doc.current_plan;
-			let currentUsage =
-				serverType === 'Server'
-					? this.$appServer.doc.usage
-					: this.$dbServer.doc.usage;
+					? this.$appServer.doc
+					: serverType === 'Database Server'
+					? this.$dbServer.doc
+					: serverType === 'Replication Server'
+					? this.$dbReplicaServer?.doc
+					: null;
 
-			let diskSize =
-				serverType === 'Server'
-					? this.$appServer.doc.disk_size
-					: this.$dbServer.doc.disk_size;
+			if (!doc) return [];
+
+			let currentPlan = doc.current_plan;
+			let currentUsage = doc.usage;
+			let diskSize = doc.disk_size;
+			let additionalStorage = diskSize - currentPlan.disk;
+			let price = 0;
+			let priceField =
+				this.$team.doc.currency === 'INR' ? 'price_inr' : 'price_usd';
+			let currencySymbol = this.$team.doc.currency === 'INR' ? '₹' : '$';
 
 			let planDescription = '';
 			if (!currentPlan) {
 				planDescription = 'No plan selected';
 			} else if (currentPlan.price_usd > 0) {
-				if (this.$team.doc.currency === 'INR') {
-					planDescription = `₹${currentPlan.price_inr} /month`;
-				} else {
-					planDescription = `$${currentPlan.price_usd} /month`;
-				}
+				price = currentPlan[priceField];
+				if (additionalStorage > 0)
+					price += doc.storage_plan[priceField] * additionalStorage;
+				planDescription = `${currencySymbol}${price}/mo`;
 			} else {
 				planDescription = currentPlan.plan_title;
 			}
@@ -139,9 +155,19 @@ export default {
 					label:
 						serverType === 'Server'
 							? 'Application Server Plan'
-							: 'Database Server Plan',
+							: serverType === 'Database Server'
+							? 'Database Server Plan'
+							: 'Replication Server Plan',
 					value: planDescription,
-					type: 'header'
+					type: 'header',
+					help:
+						currentPlan[priceField] < price
+							? `Server Plan: ${currencySymbol}${
+									currentPlan[priceField]
+							  }/mo & Add-on Storage Plan: ${currencySymbol}${
+									doc.storage_plan[priceField] * additionalStorage
+							  }/mo`
+							: ''
 				},
 				{
 					label: 'CPU',
@@ -178,7 +204,67 @@ export default {
 						? `${currentUsage.disk || 0} GB of ${
 								diskSize ? diskSize : currentPlan.disk
 						  } GB`
-						: 'GB'
+						: 'GB',
+					help:
+						diskSize - currentPlan.disk > 0
+							? `Add-on storage: ${diskSize - currentPlan.disk} GB`
+							: '',
+					action: {
+						label: 'Increase Storage',
+						icon: 'plus',
+						variant: 'ghost',
+						onClick: () => {
+							confirmDialog({
+								title: 'Increase Storage',
+								message: `Enter the disk size you want to increase to the server <b>${
+									doc.title || doc.name
+								}</b><div class="rounded mt-4 p-2 text-sm text-gray-700 bg-gray-100 border">You will be charged at the rate of <b>${currencySymbol}${
+									doc.storage_plan[priceField]
+								}/mo</b> for each additional GB of storage.</div>`,
+								fields: [
+									{
+										fieldname: 'storage',
+										type: 'select',
+										default: 50,
+										label: 'Storage (GB)',
+										variant: 'outline',
+										// options from 5 GB to 500 GB in steps of 5 GB
+										options: Array.from({ length: 100 }, (_, i) => ({
+											label: `${(i + 1) * 5} GB`,
+											value: (i + 1) * 5
+										}))
+									}
+								],
+								onSuccess: ({ hide, values }) => {
+									toast.promise(
+										this.$appServer.increaseDiskSize.submit(
+											{
+												server: doc.name,
+												increment: values.storage
+											},
+											{
+												onSuccess: () => {
+													hide();
+													this.$router.push({
+														name: 'Server Detail Plays',
+														params: { name: this.$appServer.name }
+													});
+												},
+												onError(e) {
+													console.error(e);
+												}
+											}
+										),
+										{
+											loading: 'Increasing disk size...',
+											success: 'Disk size is scheduled to increase',
+											error: 'Failed to increase disk size'
+										}
+									);
+								}
+							});
+						}
+					}
 				}
 			];
 		}
@@ -195,6 +281,10 @@ export default {
 					value: this.$appServer.doc.database_server
 				},
 				{
+					label: 'Replication server',
+					value: this.$appServer.doc.replication_server
+				},
+				{
 					label: 'Owned by',
 					value: this.$appServer.doc.team
 				},
@@ -206,7 +296,7 @@ export default {
 					label: 'Created on',
 					value: this.$format.date(this.$appServer.doc.creation)
 				}
-			];
+			].filter(d => d.value);
 		},
 		$appServer() {
 			return getCachedDocumentResource('Server', this.server);
@@ -215,6 +305,17 @@ export default {
 			return getDocResource({
 				doctype: 'Database Server',
 				name: this.$appServer.doc.database_server,
+				whitelistedMethods: {
+					changePlan: 'change_plan',
+					reboot: 'reboot',
+					rename: 'rename'
+				}
+			});
+		},
+		$dbReplicaServer() {
+			return getDocResource({
+				doctype: 'Database Server',
+				name: this.$appServer.doc.replication_server,
 				whitelistedMethods: {
 					changePlan: 'change_plan',
 					reboot: 'reboot',

@@ -1,8 +1,14 @@
 <template>
 	<div>
-		<div v-if="hideControls" class="flex items-center justify-between">
+		<AlertBanner
+			v-if="banner"
+			:title="banner.title"
+			:type="banner.type"
+			class="mb-4"
+		/>
+		<div class="flex items-center justify-between">
 			<slot name="header-left" v-bind="context">
-				<div class="flex items-center space-x-2">
+				<div v-if="showControls" class="flex items-center space-x-2">
 					<TextInput
 						placeholder="Search"
 						class="max-w-[20rem]"
@@ -24,6 +30,7 @@
 						@update:filter="onFilterControlChange"
 					/>
 				</div>
+				<div v-else></div>
 			</slot>
 			<div class="ml-2 flex shrink-0 items-center space-x-2">
 				<slot name="header-right" v-bind="context" />
@@ -49,6 +56,12 @@
 						</template>
 					</Button>
 				</Tooltip>
+				<ActionButton
+					v-for="button in actions"
+					v-bind="button"
+					:key="button.label"
+					:context="context"
+				/>
 				<ActionButton v-bind="secondaryAction" :context="context" />
 				<ActionButton v-bind="primaryAction" :context="context" />
 			</div>
@@ -65,9 +78,11 @@
 					getRowRoute: this.options.route
 						? row => this.options.route(row)
 						: null,
+					rowHeight: this.options.rowHeight,
 					emptyState: {}
 				}"
 				row-key="name"
+				@update:selections="e => this.$emit('update:selections', e)"
 			>
 				<template v-if="options.groupHeader" #group-header="{ group }">
 					<component :is="options.groupHeader({ ...context, group })" />
@@ -94,7 +109,7 @@
 					<ErrorMessage :message="$list.list.error" />
 				</div>
 				<div v-else class="text-center text-sm leading-10 text-gray-500">
-					No results found
+					{{ emptyStateMessage }}
 				</div>
 			</div>
 			<div class="px-2 py-2 text-right" v-if="$list">
@@ -111,18 +126,14 @@
 </template>
 <script>
 import { reactive } from 'vue';
+import AlertBanner from './AlertBanner.vue';
 import ActionButton from './ActionButton.vue';
 import ObjectListCell from './ObjectListCell.vue';
 import ObjectListFilters from './ObjectListFilters.vue';
 import {
-	Dropdown,
 	ListView,
 	ListHeader,
-	ListHeaderItem,
-	ListRows,
 	ListRow,
-	ListRowItem,
-	ListSelectBanner,
 	TextInput,
 	FeatherIcon,
 	Tooltip,
@@ -134,18 +145,15 @@ let subscribed = {};
 export default {
 	name: 'ObjectList',
 	props: ['options'],
+	emits: ['update:selections'],
 	components: {
+		AlertBanner,
 		ActionButton,
 		ObjectListCell,
 		ObjectListFilters,
-		Dropdown,
 		ListView,
 		ListHeader,
-		ListHeaderItem,
-		ListRows,
 		ListRow,
-		ListRowItem,
-		ListSelectBanner,
 		TextInput,
 		FeatherIcon,
 		Tooltip,
@@ -310,10 +318,16 @@ export default {
 				.map(row => {
 					if (row.rows && row.group) {
 						// group
-						return {
-							...row,
-							rows: row.rows.filter(row => this.filterRow(query, row))
-						};
+						let filteredRows = row.rows.filter(row =>
+							this.filterRow(query, row)
+						);
+
+						if (filteredRows.length) {
+							return {
+								...row,
+								rows: row.rows.filter(row => this.filterRow(query, row))
+							};
+						}
 					}
 					if (this.filterRow(query, row)) {
 						return row;
@@ -352,6 +366,16 @@ export default {
 					return reactive({ ...control, value: control.default || undefined });
 				});
 		},
+		actions() {
+			if (!this.options.actions) return [];
+			let actions = this.options.actions(this.context);
+			return actions.filter(action => {
+				if (action.condition) {
+					return action.condition(this.context);
+				}
+				return true;
+			});
+		},
 		primaryAction() {
 			if (!this.options.primaryAction) return null;
 			let props = this.options.primaryAction(this.context);
@@ -374,8 +398,21 @@ export default {
 			if (this.options.data) return false;
 			return this.$list.list?.loading || this.$list.loading;
 		},
-		hideControls() {
-			return !this.options.hideControls;
+		showControls() {
+			return (
+				(this.searchQuery ||
+					this.rows.length > 5 ||
+					this.filterControls.length) &&
+				!this.options.hideControls
+			);
+		},
+		emptyStateMessage() {
+			return this.options.emptyStateMessage || 'No results found';
+		},
+		banner() {
+			if (this.options.banner) {
+				return this.options.banner(this.context);
+			}
 		}
 	},
 	methods: {

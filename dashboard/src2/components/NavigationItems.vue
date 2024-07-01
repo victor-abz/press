@@ -13,6 +13,8 @@ import WalletCards from '~icons/lucide/wallet-cards';
 import Settings from '~icons/lucide/settings';
 import App from '~icons/lucide/layout-grid';
 import Globe from '~icons/lucide/globe';
+import Notification from '~icons/lucide/inbox';
+import { unreadNotificationsCount } from '../data/notifications';
 
 export default {
 	name: 'NavigationItems',
@@ -28,6 +30,27 @@ export default {
 					route: '/welcome',
 					isActive: routeName === 'Welcome',
 					condition: !this.$team.doc.onboarding.complete
+				},
+				{
+					name: 'Notifications',
+					icon: () => h(Notification),
+					route: '/notifications',
+					isActive: routeName === 'Press Notification List',
+					condition: this.$team.doc.onboarding.complete,
+					badge: () => {
+						if (unreadNotificationsCount.data > 0) {
+							return h(
+								'span',
+								{
+									class: '!ml-auto px-1.5 py-0.5 text-xs text-gray-600'
+								},
+								unreadNotificationsCount.data > 99
+									? '99+'
+									: unreadNotificationsCount.data
+							);
+						}
+					},
+					disabled
 				},
 				{
 					name: 'Sites',
@@ -66,6 +89,9 @@ export default {
 					icon: () => h(App),
 					route: '/apps',
 					isActive: routeName.startsWith('Marketplace'),
+					condition:
+						this.$team.doc.is_desk_user ||
+						(!!this.$team.doc.is_developer && this.$session.hasAppsAccess),
 					disabled
 				},
 				{
@@ -73,6 +99,18 @@ export default {
 					icon: () => h(WalletCards),
 					route: '/billing',
 					isActive: routeName.startsWith('Billing'),
+					condition:
+						this.$team.doc.is_desk_user || this.$session.hasBillingAccess,
+					disabled
+				},
+				{
+					name: 'Partners',
+					icon: () => h(Globe),
+					route: '/partners',
+					isActive: routeName.startsWith('Partner'),
+					condition:
+						// this.$session.hasPartnerAccess &&
+						Boolean(this.$team.doc.erpnext_partner),
 					disabled
 				},
 				{
@@ -81,24 +119,20 @@ export default {
 					route: '/settings',
 					isActive: routeName.startsWith('Settings'),
 					disabled
-				},
-				{
-					name: 'Partners',
-					icon: () => h(Globe),
-					route: '/partners',
-					isActive: routeName.startsWith('Partners'),
-					condition: Boolean(this.$team.doc.erpnext_partner),
-					disabled
 				}
-				// {
-				// 	name: 'Notifications',
-				// 	icon: () => h(Notification),
-				// 	route: '/notifications',
-				// 	isActive: routeName.startsWith('Notification'),
-				// 	disabled
-				// }
 			].filter(item => item.condition !== false);
 		}
+	},
+	mounted() {
+		this.$socket.emit('doctype_subscribe', 'Press Notification');
+		this.$socket.on('press_notification', data => {
+			if (data.team === this.$team.doc.name) {
+				unreadNotificationsCount.setData(data => data + 1);
+			}
+		});
+	},
+	unmounted() {
+		this.$socket.off('press_notification');
 	}
 };
 </script>

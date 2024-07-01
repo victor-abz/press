@@ -5,7 +5,15 @@
 		</Header>
 	</div>
 
-	<div class="mx-auto max-w-2xl px-5">
+	<div
+		v-if="!$team.doc.is_desk_user && !$session.hasSiteCreationAccess"
+		class="mx-auto mt-60 w-fit rounded border border-dashed px-12 py-8 text-center text-gray-600"
+	>
+		<i-lucide-alert-triangle class="mx-auto mb-4 h-6 w-6 text-red-600" />
+		<ErrorMessage message="You aren't permitted to create new sites" />
+	</div>
+
+	<div v-else class="mx-auto max-w-2xl px-5">
 		<div v-if="$resources.options.loading" class="py-4 text-base text-gray-600">
 			Loading...
 		</div>
@@ -96,7 +104,7 @@
 				<div class="mt-2">
 					<SitePlansCards
 						v-model="plan"
-						:isBenchSite="!!bench"
+						:isPrivateBenchSite="!!bench"
 						:isDedicatedServerSite="selectedVersion.group.is_dedicated_server"
 					/>
 				</div>
@@ -116,17 +124,16 @@
 							.{{ options.domain }}
 						</div>
 					</div>
+				</div>
+				<div class="mt-1">
 					<div
 						v-if="$resources.subdomainExists.loading"
 						class="text-base text-gray-600"
 					>
 						Checking...
 					</div>
-				</div>
-				<div class="mt-1">
-					<ErrorMessage :message="$resources.subdomainExists.error" />
 					<template
-						v-if="
+						v-else-if="
 							!$resources.subdomainExists.error &&
 							$resources.subdomainExists.data != null
 						"
@@ -141,6 +148,7 @@
 							{{ subdomain }}.{{ options.domain }} is not available
 						</div>
 					</template>
+					<ErrorMessage :message="$resources.subdomainExists.error" />
 				</div>
 			</div>
 			<Summary
@@ -172,6 +180,7 @@
 					:disabled="!agreedToRegionConsent"
 					@click="$resources.newSite.submit()"
 					:loading="$resources.newSite.loading"
+					:loadingText="'Creating site... This may take a while...'"
 				>
 					Create site
 				</Button>
@@ -198,6 +207,7 @@ import router from '../router';
 import { plans } from '../data/plans';
 import NewSiteAppSelector from '../components/site/NewSiteAppSelector.vue';
 import Summary from '../components/Summary.vue';
+import { DashboardError } from '../utils/error';
 
 export default {
 	name: 'NewSite',
@@ -260,7 +270,7 @@ export default {
 					return { for_bench: this.bench };
 				},
 				onSuccess() {
-					if (this.bench) {
+					if (this.bench && this.options.versions.length > 0) {
 						this.version = this.options.versions[0].name;
 					}
 				},
@@ -277,7 +287,10 @@ export default {
 					};
 				},
 				validate() {
-					return validateSubdomain(this.subdomain);
+					let error = validateSubdomain(this.subdomain);
+					if (error) {
+						return new DashboardError(error);
+					}
 				},
 				transform(data) {
 					return !Boolean(data);
@@ -310,7 +323,9 @@ export default {
 							],
 							app_plans: appPlans,
 							cluster: this.cluster,
-							bench: this.selectedVersion.group.bench,
+							bench: this.bench ? this.selectedVersion.group.bench : null,
+							group: this.selectedVersion.group.name,
+							domain: this.options.domain,
 							subscription_plan: this.plan.name,
 							share_details_consent: this.shareDetailsConsent
 						}
@@ -318,11 +333,13 @@ export default {
 				},
 				validate() {
 					if (!this.subdomain) {
-						return 'Please enter a subdomain';
+						throw new DashboardError('Please enter a subdomain');
 					}
 
 					if (!this.agreedToRegionConsent) {
-						return 'Please agree to the above consent to create site';
+						throw new DashboardError(
+							'Please agree to the above consent to create site'
+						);
 					}
 				},
 				onSuccess: site => {

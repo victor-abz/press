@@ -33,6 +33,7 @@ class SelfHostedServer(Document):
 		cluster: DF.Link | None
 		database_plan: DF.Link | None
 		database_server: DF.Link | None
+		database_service: DF.Literal["AWS - RDS"]
 		database_setup: DF.Check
 		db_ram: DF.Data | None
 		db_total_storage: DF.Data | None
@@ -46,6 +47,7 @@ class SelfHostedServer(Document):
 		hostname: DF.Data | None
 		instance_type: DF.Data | None
 		ip: DF.Data
+		is_managed_database: DF.Check
 		mariadb_ip: DF.Data | None
 		mariadb_private_ip: DF.Data | None
 		mariadb_root_password: DF.Password
@@ -369,6 +371,8 @@ class SelfHostedServer(Document):
 			if not frappe.flags.in_test:
 				db_server.create_dns_record()
 
+			frappe.db.commit()
+
 			frappe.msgprint(f"Databse server record {db_server.name} created")
 		except Exception:
 			frappe.throw("Adding Server to Database Server Doctype failed")
@@ -444,6 +448,8 @@ class SelfHostedServer(Document):
 
 			if not frappe.flags.in_test:
 				server.create_dns_record()
+
+			frappe.db.commit()
 
 		except Exception as e:
 			self.status = "Broken"

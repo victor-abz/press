@@ -49,7 +49,7 @@ def update_cpu_usages():
 				site_doc.current_cpu_usage = latest_cpu_usage
 				site_doc.save()
 				frappe.db.commit()
-			except Exception():
+			except Exception:
 				log_error("Site CPU Usage Update Error", cpu_usage=cpu_usage, cpu_limit=cpu_limit)
 				frappe.db.rollback()
 
@@ -112,11 +112,13 @@ def update_disk_usages():
 
 	for usage in latest_disk_usages:
 		try:
-			site = frappe.get_doc("Site", usage.site)
+			site = frappe.get_doc("Site", usage.site, for_update=True)
 			site.current_database_usage = usage.latest_database_usage
 			site.current_disk_usage = usage.latest_disk_usage
 			site.save()
 			frappe.db.commit()
+		except frappe.DoesNotExistError:
+			frappe.db.rollback()
 		except Exception:
 			log_error("Site Disk Usage Update Error", usage=usage)
 			frappe.db.rollback()

@@ -25,12 +25,15 @@
 					<div class="mt-2 flex items-start justify-between">
 						<div>
 							<div class="leading-4">
-								<span class="text-base text-gray-900" v-if="currentPlan">
-									{{ $format.planTitle(currentPlan) }}
-									<span v-if="currentPlan.price_inr">/ month</span>
-								</span>
-								<span class="text-base text-gray-900" v-else>
-									No plan set
+								<span class="text-base text-gray-900">
+									<template v-if="$site.doc.trial_end_date">
+										{{ trialDays($site.doc.trial_end_date) }}
+									</template>
+									<template v-else-if="currentPlan">
+										{{ $format.planTitle(currentPlan) }}
+										<span v-if="currentPlan.price_inr">/ month</span>
+									</template>
+									<template v-else> No plan set </template>
 								</span>
 							</div>
 							<div
@@ -63,7 +66,9 @@
 								<div class="text-sm text-gray-600">
 									{{ currentUsage.cpu }}
 									{{ $format.plural(currentUsage.cpu, 'hour', 'hours') }}
-									<template v-if="currentPlan">
+									<template
+										v-if="currentPlan && !$site.doc.is_dedicated_server"
+									>
 										of {{ currentPlan?.cpu_time_per_day }} hours
 									</template>
 								</div>
@@ -86,7 +91,9 @@
 							<div class="mt-2 flex justify-between">
 								<div class="text-sm text-gray-600">
 									{{ formatBytes(currentUsage.storage) }}
-									<template v-if="currentPlan">
+									<template
+										v-if="currentPlan && !$site.doc.is_dedicated_server"
+									>
 										of {{ formatBytes(currentPlan.max_storage_usage) }}
 									</template>
 								</div>
@@ -110,7 +117,9 @@
 							<div class="mt-2 flex justify-between">
 								<div class="text-sm text-gray-600">
 									{{ formatBytes(currentUsage.database) }}
-									<template v-if="currentPlan">
+									<template
+										v-if="currentPlan && !$site.doc.is_dedicated_server"
+									>
 										of
 										{{ formatBytes(currentPlan.max_database_usage) }}
 									</template>
@@ -135,13 +144,14 @@
 					<div
 						class="flex w-2/3 items-center space-x-2 text-base text-gray-900"
 					>
+						<div v-if="d.prefix">
+							<component :is="d.prefix" />
+						</div>
 						<span>
 							{{ d.value }}
 						</span>
-						<div v-if="d.help">
-							<Tooltip :text="d.help">
-								<i-lucide-info class="h-4 w-4 text-gray-500" />
-							</Tooltip>
+						<div v-if="d.suffix">
+							<component :is="d.suffix" />
 						</div>
 					</div>
 				</div>
@@ -152,10 +162,12 @@
 </template>
 <script>
 import { h, defineAsyncComponent } from 'vue';
-import { getCachedDocumentResource, Progress } from 'frappe-ui';
+import { getCachedDocumentResource, Progress, Tooltip } from 'frappe-ui';
+import InfoIcon from '~icons/lucide/info';
 import { renderDialog } from '../utils/components';
 import SiteDailyUsage from './SiteDailyUsage.vue';
 import AlertBanner from './AlertBanner.vue';
+import { trialDays } from '../utils/site';
 
 export default {
 	name: 'SiteOverview',
@@ -185,7 +197,8 @@ export default {
 		},
 		loginAsAdmin() {
 			this.$site.loginAsAdmin.submit().then(url => window.open(url, '_blank'));
-		}
+		},
+		trialDays
 	},
 	computed: {
 		siteInformation() {
@@ -203,14 +216,35 @@ export default {
 					value: this.$format.date(this.$site.doc.creation)
 				},
 				{
+					label: 'Region',
+					value: this.$site.doc.cluster.title,
+					prefix: h('img', {
+						src: this.$site.doc.cluster.image,
+						alt: this.$site.doc.cluster.title,
+						class: 'h-4 w-4'
+					})
+				},
+				{
 					label: 'Inbound IP',
 					value: this.$site.doc.inbound_ip,
-					help: 'Use this for adding A records for your site'
+					suffix: h(
+						Tooltip,
+						{
+							text: 'Use this for adding A records for your site'
+						},
+						() => h(InfoIcon, { class: 'h-4 w-4 text-gray-500' })
+					)
 				},
 				{
 					label: 'Outbound IP',
 					value: this.$site.doc.outbound_ip,
-					help: 'Use this for whitelisting our server on a 3rd party service'
+					suffix: h(
+						Tooltip,
+						{
+							text: 'Use this for whitelisting our server on a 3rd party service'
+						},
+						() => h(InfoIcon, { class: 'h-4 w-4 text-gray-500' })
+					)
 				}
 			];
 		},

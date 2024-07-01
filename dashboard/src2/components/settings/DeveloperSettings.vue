@@ -105,6 +105,13 @@ const addSSHKey = createResource({
 	url: 'press.api.client.insert',
 	onSuccess() {
 		toast.success('SSH Key added successfully');
+	},
+	onError(err) {
+		toast.error(
+			err.messages.length
+				? err.messages.join('\n')
+				: 'SSH Key could not be added'
+		);
 	}
 });
 
@@ -112,6 +119,13 @@ const makeKeyDefault = createResource({
 	url: 'press.api.account.mark_key_as_default',
 	onSuccess() {
 		toast.success('SSH Key updated successfully');
+	},
+	onError(err) {
+		toast.error(
+			err.messages.length
+				? err.messages.join('\n')
+				: 'SSH Key could not be marked as default'
+		);
 	}
 });
 
@@ -119,13 +133,21 @@ const deleteSSHKey = createResource({
 	url: 'press.api.client.delete',
 	onSuccess() {
 		toast.success('SSH Key deleted successfully');
+	},
+	onError(err) {
+		toast.error(
+			err.messages.length
+				? err.messages.join('\n')
+				: 'SSH Key could not be deleted'
+		);
 	}
 });
 
 const sshKeyListOptions = computed(() => ({
 	doctype: 'User SSH Key',
 	filters: {
-		user: $team.doc.user_info.name
+		user: $team.doc.user_info.name,
+		is_removed: 0
 	},
 	fields: ['name', 'ssh_fingerprint', 'creation', 'is_default'],
 	orderBy: 'creation desc',

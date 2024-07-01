@@ -3,39 +3,51 @@
 # For license information, please see license.txt
 
 import json
-from frappe.utils.user import is_system_user
-from press.press.doctype.server.server import is_dedicated_server
-from press.press.doctype.marketplace_app.marketplace_app import get_plans_for_app
-import wrapt
-import frappe
-from dns.resolver import Resolver
-import dns.exception
-
 from typing import Dict
+
+import dns.exception
+import frappe
+import requests
+import wrapt
 from boto3 import client
-from frappe.core.utils import find
 from botocore.exceptions import ClientError
+from dns.resolver import Resolver
+from frappe.core.utils import find
 from frappe.desk.doctype.tag.tag import add_tag
-from frappe.utils import flt, time_diff_in_hours, sbool
+from frappe.utils import flt, sbool, time_diff_in_hours
 from frappe.utils.password import get_decrypted_password
+from frappe.utils.user import is_system_user
 from press.press.doctype.agent_job.agent_job import job_detail
-from press.press.doctype.press_user_permission.press_user_permission import (
-	has_user_permission,
-)
-from press.press.doctype.remote_file.remote_file import get_remote_key
-from press.press.doctype.site_plan.plan import Plan
-from press.press.doctype.site_update.site_update import benches_with_available_update
 from press.press.doctype.marketplace_app.marketplace_app import (
+	get_plans_for_app,
 	get_total_installs_by_app,
 )
+from press.press.doctype.remote_file.remote_file import get_remote_key
+from press.press.doctype.server.server import is_dedicated_server
+from press.press.doctype.site_plan.plan import Plan
+from press.press.doctype.site_update.site_update import benches_with_available_update
 from press.utils import (
-	get_current_team,
-	log_error,
-	get_last_doc,
-	get_frappe_backups,
 	get_client_blacklisted_keys,
+	get_current_team,
+	get_frappe_backups,
+	get_last_doc,
+	has_role,
+	log_error,
 	unique,
 )
+
+from typing import TYPE_CHECKING
+
+if TYPE_CHECKING:
+
+	from press.press.doctype.bench.bench import Bench
+	from press.press.doctype.bench_app.bench_app import BenchApp
+	from press.press.doctype.deploy_candidate.deploy_candidate import DeployCandidate
+	from press.press.doctype.deploy_candidate_app.deploy_candidate_app import (
+		DeployCandidateApp,
+	)
+	from frappe.types import DF
+
 
 NAMESERVERS = ["1.1.1.1", "1.0.0.1", "8.8.8.8", "8.8.4.4"]
 
@@ -43,11 +55,6 @@ NAMESERVERS = ["1.1.1.1", "1.0.0.1", "8.8.8.8", "8.8.4.4"]
 def protected(doctypes):
 	@wrapt.decorator
 	def wrapper(wrapped, instance, args, kwargs):
-		request_path = (
-			frappe.local.request.path.rsplit("/", 1)[-1]
-			if hasattr(frappe.local, "request")
-			else ""
-		)
 		user_type = frappe.session.data.user_type or frappe.get_cached_value(
 			"User", frappe.session.user, "user_type"
 		)
@@ -66,34 +73,11 @@ def protected(doctypes):
 
 		for doctype in doctypes:
 			owner = frappe.db.get_value(doctype, name, "team")
-			has_config_permissions = frappe.db.exists(
-				"Press User Permission", {"type": "Config", "user": frappe.session.user}
-			)
 
-			if owner == team or has_config_permissions:
-				is_team_member = frappe.get_value("Team", team, "user") != frappe.session.user
-				if is_team_member and hasattr(frappe.local, "request"):
-					is_method_restrictable = frappe.db.exists(
-						"Press Method Permission", {"method": request_path}
-					)
-					if not is_method_restrictable:
-						return wrapped(*args, **kwargs)
+			if owner == team or has_role("Press Support Agent"):
+				return wrapped(*args, **kwargs)
 
-					if doctype == "Bench":
-						name = frappe.db.get_value(doctype, name, "group")
-						doctype = "Release Group"
-
-					if has_user_permission(doctype, name, request_path):
-						return wrapped(*args, **kwargs)
-
-					else:
-						# has access to everything
-						return wrapped(*args, **kwargs)
-				else:
-					# Logged in user is the team owner
-					return wrapped(*args, **kwargs)
-
-		raise frappe.PermissionError
+		frappe.throw("Not Permitted", frappe.PermissionError)
 
 	return wrapper
 
@@ -209,7 +193,10 @@ def _new(site, server: str = None, ignore_plan_validation: bool = False):
 
 
 def validate_plan(server, plan):
-	if frappe.db.get_value("Site Plan", plan, "price_usd") > 0:
+	if (
+		frappe.db.get_value("Site Plan", plan, "price_usd") > 0
+		or frappe.db.get_value("Site Plan", plan, "dedicated_server_plan") == 1
+	):
 		return
 	if (
 		frappe.session.data.user_type == "System User"
@@ -232,7 +219,7 @@ def get_app_subscriptions(app_plans, team: str):
 	for app_name, plan_name in app_plans.items():
 		is_free = frappe.db.get_value("Marketplace App Plan", plan_name, "is_free")
 		if not is_free:
-			team = get_current_team(get_doc=True)
+			team = frappe.get_doc("Team", team)
 			if not team.can_install_paid_apps():
 				frappe.throw(
 					"You cannot install a Paid app on Free Credits. Please buy credits before trying to install again."
@@ -1019,7 +1006,7 @@ def check_for_updates(name):
 	if not out.update_available:
 		return out
 
-	bench = frappe.get_doc("Bench", site.bench)
+	bench: "Bench" = frappe.get_doc("Bench", site.bench)
 	source = bench.candidate
 	destinations = frappe.get_all(
 		"Deploy Candidate Difference",
@@ -1033,17 +1020,26 @@ def check_for_updates(name):
 
 	destination = destinations[0]
 
-	destination_candidate = frappe.get_doc("Deploy Candidate", destination)
+	destination_candidate: "DeployCandidate" = frappe.get_doc(
+		"Deploy Candidate", destination
+	)
 
 	out.installed_apps = site.apps
+
+	current_apps = bench.apps
+	next_apps = destination_candidate.apps
 	out.apps = get_updates_between_current_and_next_apps(
-		bench.apps, destination_candidate.apps
+		current_apps,
+		next_apps,
 	)
 	out.update_available = any([app["update_available"] for app in out.apps])
 	return out
 
 
-def get_updates_between_current_and_next_apps(current_apps, next_apps):
+def get_updates_between_current_and_next_apps(
+	current_apps: "DF.Table[BenchApp]",
+	next_apps: "DF.Table[DeployCandidateApp]",
+):
 	from press.utils import get_app_tag
 
 	apps = []
@@ -1064,7 +1060,7 @@ def get_updates_between_current_and_next_apps(current_apps, next_apps):
 			if current_hash
 			else None
 		)
-		next_hash = app.hash
+		next_hash = app.pullable_hash or app.hash
 		apps.append(
 			{
 				"title": app.title,
@@ -1378,6 +1374,7 @@ def restore(name, files, skip_failing_patches=False):
 	site.remote_database_file = files["database"]
 	site.remote_public_file = files["public"]
 	site.remote_private_file = files["private"]
+	site.remote_config_file = files.get("config", "")
 	site.save()
 	site.reload()
 	return site.restore_site(skip_failing_patches=skip_failing_patches)
@@ -1394,6 +1391,29 @@ def exists(subdomain, domain):
 @protected("Site")
 def setup_wizard_complete(name):
 	return frappe.get_doc("Site", name).is_setup_wizard_complete()
+
+
+def check_domain_allows_letsencrypt_certs(domain):
+	# Check if domain is allowed to get letsencrypt certificates
+	# This is a security measure to prevent unauthorized certificate issuance
+	from tldextract import extract
+
+	naked_domain = extract(domain).registered_domain
+	resolver = Resolver(configure=False)
+	resolver.nameservers = NAMESERVERS
+	try:
+		answer = resolver.query(naked_domain, "CAA")
+		for rdata in answer:
+			if "letsencrypt.org" in rdata.to_text():
+				return True
+	except dns.resolver.NoAnswer:
+		pass  # no CAA record. Anything goes
+	except dns.exception.DNSException:
+		pass  # We have other probems
+	else:
+		frappe.throw(
+			f"Domain {naked_domain} does not allow Let's Encrypt certificates. Please review CAA record for the same."
+		)
 
 
 def check_dns_cname_a(name, domain):
@@ -1426,6 +1446,17 @@ def check_dns_cname_a(name, domain):
 			result["answer"] = answer.rrset.to_text()
 			if domain_ip == site_ip:
 				result["matched"] = True
+			elif site_ip:
+				# We can issue certificates even if the domain points to the secondary proxies
+				server = frappe.db.get_value("Site", name, "server")
+				proxy = frappe.db.get_value("Server", server, "proxy_server")
+				secondary_ips = frappe.get_all(
+					"Proxy Server",
+					{"status": "Active", "primary": proxy, "is_replication_setup": True},
+					pluck="ip",
+				)
+				if site_ip in secondary_ips:
+					result["matched"] = True
 		except dns.exception.DNSException as e:
 			result["answer"] = str(e)
 		except Exception as e:
@@ -1434,6 +1465,7 @@ def check_dns_cname_a(name, domain):
 		finally:
 			return result
 
+	check_domain_allows_letsencrypt_certs(domain)
 	cname = check_dns_cname(name, domain)
 	result = {"CNAME": cname}
 	result.update(cname)
@@ -1660,7 +1692,10 @@ def uploaded_backup_info(file=None, path=None, type=None, size=None, url=None):
 
 @frappe.whitelist()
 def get_backup_links(url, email, password):
-	files = get_frappe_backups(url, email, password)
+	try:
+		files = get_frappe_backups(url, email, password)
+	except requests.RequestException as e:
+		frappe.throw(f"Could not fetch backups from {url}. Error: {e}")
 	remote_files = []
 	for file_type, file_url in files.items():
 		file_name = file_url.split("backups/")[1].split("?sid=")[0]
@@ -1863,7 +1898,7 @@ def clone_group(name, new_group_title):
 	cloned_group.insert()
 
 	candidate = cloned_group.create_deploy_candidate()
-	candidate.deploy_to_production()
+	candidate.schedule_build_and_deploy()
 
 	return {
 		"bench_name": cloned_group.name,
@@ -1904,7 +1939,7 @@ def change_region_options(name):
 def change_region(name, cluster, scheduled_datetime=None, skip_failing_patches=False):
 	group = frappe.db.get_value("Site", name, "group")
 	bench_vals = frappe.db.get_value(
-		"Bench", {"group": group, "cluster": cluster}, ["name", "server"]
+		"Bench", {"group": group, "cluster": cluster, "status": "Active"}, ["name", "server"]
 	)
 
 	if bench_vals is None:
@@ -1936,7 +1971,11 @@ def get_private_groups_for_upgrade(name, version):
 	version_number = frappe.db.get_value("Frappe Version", version, "number")
 	next_version = frappe.db.get_value(
 		"Frappe Version",
-		{"number": version_number + 1, "status": "Stable", "public": True},
+		{
+			"number": version_number + 1,
+			"status": ("in", ("Stable", "End of Life")),
+			"public": True,
+		},
 		"name",
 	)
 
@@ -2019,6 +2058,11 @@ def change_server(name, server, scheduled_datetime=None, skip_failing_patches=Fa
 	bench = frappe.db.get_value(
 		"Bench", {"group": group, "status": "Active", "server": server}, "name"
 	)
+
+	if not bench:
+		frappe.throw(
+			f"Please wait for the new deploy to be created in the server {frappe.bold(server)} if you have just added a new server to the bench."
+		)
 
 	site_migration = frappe.get_doc(
 		{

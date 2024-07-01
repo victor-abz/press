@@ -10,6 +10,8 @@ import router from './router';
 import { initSocket } from './socket';
 import { subscribeToJobUpdates } from './utils/agentJob';
 import { fetchPlans } from './data/plans.js';
+import * as Sentry from '@sentry/vue';
+import { session } from './data/session.js';
 
 let request = options => {
 	let _options = options || {};
@@ -25,7 +27,7 @@ setConfig('defaultListUrl', 'press.api.client.get_list');
 setConfig('defaultDocGetUrl', 'press.api.client.get');
 setConfig('defaultDocInsertUrl', 'press.api.client.insert');
 setConfig('defaultRunDocMethodUrl', 'press.api.client.run_doc_method');
-// setConfig('defaultDocUpdateUrl', 'press.api.list.set_value');
+setConfig('defaultDocUpdateUrl', 'press.api.client.set_value');
 setConfig('defaultDocDeleteUrl', 'press.api.client.delete');
 
 let app;
@@ -41,7 +43,43 @@ getInitialData().then(() => {
 	app.config.globalProperties.$socket = socket;
 	window.$socket = socket;
 	subscribeToJobUpdates(socket);
-	fetchPlans();
+	if (session.isLoggedIn) {
+		fetchPlans();
+		session.roles.fetch();
+	}
+
+	if (window.press_dashboard_sentry_dsn.includes('https://')) {
+		Sentry.init({
+			app,
+			dsn: window.press_dashboard_sentry_dsn,
+			integrations: [Sentry.browserTracingIntegration({ router })],
+			beforeSend(event, hint) {
+				const ignoreErrors = [
+					/api\/method\/press.api.client/,
+					/dynamically imported module/,
+					/NetworkError when attempting to fetch resource/,
+					/Load failed/,
+					/Importing a module script failed./
+				];
+				const ignoreErrorTypes = [
+					'ValidationError',
+					'PermissionError',
+					'AuthenticationError'
+				];
+				const error = hint.originalException;
+
+				if (
+					error?.name === 'DashboardError' ||
+					ignoreErrorTypes.includes(error?.exc_type) ||
+					(error?.message && ignoreErrors.some(re => re.test(error.message)))
+				)
+					return null;
+
+				return event;
+			},
+			logErrors: true
+		});
+	}
 
 	importGlobals().then(() => {
 		app.mount('#app');

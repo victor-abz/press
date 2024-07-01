@@ -3,7 +3,7 @@ import { getTeam } from './data/team';
 import generateRoutes from './objects/generateRoutes';
 
 let router = createRouter({
-	history: createWebHistory('/dashboard-beta/'),
+	history: createWebHistory('/dashboard/'),
 	routes: [
 		{
 			path: '/',
@@ -41,6 +41,24 @@ let router = createRouter({
 			component: () => import('./pages/ResetPassword.vue'),
 			props: true,
 			meta: { isLoginPage: true }
+		},
+		{
+			path: '/checkout/:secretKey',
+			name: 'Checkout',
+			component: () => import('../src/views/checkout/Checkout.vue'),
+			props: true,
+			meta: {
+				isLoginPage: true
+			}
+		},
+		{
+			path: '/subscription/:site?',
+			name: 'Subscription',
+			component: () => import('../src/views/checkout/Subscription.vue'),
+			props: true,
+			meta: {
+				hideSidebar: true
+			}
 		},
 		{
 			name: 'New Site',
@@ -127,20 +145,19 @@ let router = createRouter({
 					name: 'SettingsPermission',
 					path: 'permissions',
 					component: () =>
-						import('./components/settings/PermissionsSettings.vue'),
-					redirect: { name: 'SettingsPermissionGroupList' },
+						import('./components/settings/SettingsPermissions.vue'),
+					redirect: { name: 'SettingsPermissionRoles' },
 					children: [
 						{
-							path: 'groups',
-							name: 'SettingsPermissionGroupList',
-							component: () =>
-								import('./components/settings/PermissionGroupList.vue')
+							path: 'roles',
+							name: 'SettingsPermissionRoles',
+							component: () => import('./components/settings/RoleList.vue')
 						},
 						{
-							name: 'SettingsPermissionGroupPermissions',
-							path: 'groups/:groupId',
+							name: 'SettingsPermissionRolePermissions',
+							path: 'roles/:roleId',
 							component: () =>
-								import('./components/settings/PermissionGroupPermissions.vue'),
+								import('./components/settings/RolePermissions.vue'),
 							props: true
 						}
 					]
@@ -183,6 +200,26 @@ let router = createRouter({
 			component: () => import('./pages/Impersonate.vue'),
 			props: true
 		},
+		{
+			name: 'InstallApp',
+			path: '/install-app/:app',
+			component: () => import('./pages/InstallApp.vue'),
+			props: true
+		},
+		{
+			path: '/user-review/:marketplaceApp',
+			name: 'ReviewMarketplaceApp',
+			component: () =>
+				import('./components/marketplace/ReviewMarketplaceApp.vue'),
+			props: true
+		},
+		{
+			path: '/developer-reply/:marketplaceApp/:reviewId',
+			name: 'ReplyMarketplaceApp',
+			component: () =>
+				import('./components/marketplace/ReplyMarketplaceApp.vue'),
+			props: true
+		},
 		...generateRoutes(),
 		{
 			path: '/:pathMatch(.*)*',
@@ -195,7 +232,7 @@ let router = createRouter({
 router.beforeEach(async (to, from, next) => {
 	let isLoggedIn =
 		document.cookie.includes('user_id') &&
-		!document.cookie.includes('user_id=Guest;');
+		!document.cookie.includes('user_id=Guest');
 	let goingToLoginPage = to.matched.some(record => record.meta.isLoginPage);
 
 	if (isLoggedIn) {

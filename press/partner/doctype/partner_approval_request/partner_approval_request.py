@@ -4,6 +4,7 @@
 import frappe
 from frappe.model.document import Document
 from frappe.utils import get_url
+from press.api.client import dashboard_whitelist
 
 
 class PartnerApprovalRequest(Document):
@@ -23,7 +24,6 @@ class PartnerApprovalRequest(Document):
 	# end: auto-generated types
 
 	dashboard_fields = ["requested_by", "partner", "status"]
-	dashboard_actions = ["approve_partner_request"]
 
 	@staticmethod
 	def get_list_query(query, filters=None, **list_args):
@@ -40,7 +40,7 @@ class PartnerApprovalRequest(Document):
 		if self.send_mail:
 			self.send_approval_request_email()
 
-	@frappe.whitelist()
+	@dashboard_whitelist()
 	def approve_partner_request(self):
 		if self.status == "Pending":
 			self.status = "Approved"
@@ -64,7 +64,7 @@ class PartnerApprovalRequest(Document):
 		customer = frappe.db.get_value("Team", self.requested_by, "user")
 
 		link = get_url(
-			f"/api/method/press.api.account.approve_partner_request?key={self.key}"
+			f"/api/method/press.api.partner.approve_partner_request?key={self.key}"
 		)
 
 		frappe.sendmail(

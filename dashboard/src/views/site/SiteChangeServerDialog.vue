@@ -51,7 +51,7 @@
 						})
 				"
 			/>
-			<div v-if="$resources.isServerAddedInGroup.data" class="space-y-4">
+			<div v-if="$resources.isServerAddedInGroup.data" class="mt-4 space-y-4">
 				<DateTimeControl v-model="targetDateTime" label="Schedule Time" />
 				<FormControl
 					label="Skip failing patches if any"
@@ -59,17 +59,10 @@
 					v-model="skipFailingPatches"
 				/>
 			</div>
-			<p class="mt-4 text-sm text-gray-700">
+			<p v-if="message && !errorMessage" class="mt-4 text-sm text-gray-700">
 				{{ message }}
 			</p>
-			<ErrorMessage
-				class="mt-4"
-				:message="
-					$resources.changeServer.error ||
-					$resources.isServerAddedInGroup.error ||
-					$resources.addServerToReleaseGroup.error
-				"
-			/>
+			<ErrorMessage class="mt-4" :message="errorMessage" />
 		</template>
 	</Dialog>
 </template>
@@ -113,6 +106,14 @@ export default {
 			) {
 				return 'The chosen server is already added to the bench. You can now migrate the site to the server.';
 			} else return '';
+		},
+		errorMessage() {
+			return (
+				this.$resources.addServerToReleaseGroup.error ||
+				this.$resources.isServerAddedInGroup.error ||
+				this.$resources.changeServerOptions.error ||
+				this.$resources.changeServer.error
+			);
 		},
 		datetimeInIST() {
 			if (!this.targetDateTime) return null;

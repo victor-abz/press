@@ -19,6 +19,7 @@ import { tagTab } from './common/tags';
 import { getDocResource } from '../utils/resource';
 import { logsTab } from './tabs/site/logs';
 import { trialDays } from '../utils/site';
+import dayjs from '../utils/dayjs';
 
 export default {
 	doctype: 'Site',
@@ -47,6 +48,7 @@ export default {
 		removeRedirect: 'unset_redirect',
 		setPrimaryDomain: 'set_host_name',
 		restoreSite: 'restore_site',
+		restoreSiteFromFiles: 'restore_site_from_files',
 		scheduleUpdate: 'schedule_update',
 		setPlan: 'set_plan',
 		updateConfig: 'update_config',
@@ -138,11 +140,11 @@ export default {
 					return value || row.name;
 				}
 			},
-			{ label: 'Status', fieldname: 'status', type: 'Badge', width: 0.8 },
+			{ label: 'Status', fieldname: 'status', type: 'Badge', width: 0.6 },
 			{
 				label: 'Plan',
 				fieldname: 'plan',
-				width: 1,
+				width: 0.85,
 				format(value, row) {
 					if (row.trial_end_date) {
 						return trialDays(row.trial_end_date);
@@ -177,7 +179,7 @@ export default {
 			{
 				label: 'Bench',
 				fieldname: 'group',
-				width: 1,
+				width: '15rem',
 				format(value, row) {
 					return row.group_public ? 'Shared' : row.group_title || value;
 				}
@@ -185,7 +187,7 @@ export default {
 			{
 				label: 'Version',
 				fieldname: 'version',
-				width: 1
+				width: 0.5
 			}
 		],
 		primaryAction({ listResource: sites }) {
@@ -216,15 +218,16 @@ export default {
 			};
 
 			if (
-				site.doc.server_team == $team.doc.name &&
-				site.doc.group_team == $team.doc.name
+				(site.doc.server_team == $team.doc.name &&
+					site.doc.group_team == $team.doc.name) ||
+				$team.doc.is_desk_user
 			) {
 				breadcrumbs.push({
 					label: site.doc?.server_title || site.doc?.server,
 					route: `/servers/${site.doc?.server}`
 				});
 			}
-			if (site.doc.group_team == $team.doc.name) {
+			if (site.doc.group_team == $team.doc.name || $team.doc.is_desk_user) {
 				breadcrumbs.push(
 					{
 						label: site.doc?.group_title,
@@ -260,152 +263,6 @@ export default {
 				),
 				props: site => {
 					return { siteName: site.doc.name };
-				}
-			},
-			{
-				label: 'Updates',
-				icon: icon('arrow-up-circle'),
-				route: 'updates',
-				type: 'list',
-				list: {
-					doctype: 'Site Update',
-					filters: site => {
-						return { site: site.doc.name };
-					},
-					orderBy: 'creation',
-					fields: ['difference', 'update_job.end as updated_on', 'update_job'],
-					columns: [
-						{
-							label: 'Type',
-							fieldname: 'deploy_type',
-							width: 0.3
-						},
-						{
-							label: 'Status',
-							fieldname: 'status',
-							type: 'Badge',
-							width: 0.5
-						},
-						{
-							label: 'Created By',
-							fieldname: 'owner'
-						},
-						{
-							label: 'Scheduled At',
-							fieldname: 'scheduled_time',
-							format(value) {
-								return date(value, 'lll');
-							}
-						},
-						{
-							label: 'Updated On',
-							fieldname: 'updated_on',
-							format(value) {
-								return date(value, 'lll');
-							}
-						}
-					],
-					rowActions({ row, documentResource: site }) {
-						return [
-							{
-								label: 'View Job',
-								onClick() {
-									router.push({
-										name: 'Site Job',
-										params: { name: site.name, id: row.update_job }
-									});
-								}
-							},
-							{
-								label: 'Update Now',
-								condition: () => row.status === 'Scheduled',
-								onClick() {
-									let siteUpdate = getDocResource({
-										doctype: 'Site Update',
-										name: row.name,
-										whitelistedMethods: {
-											updateNow: 'start'
-										}
-									});
-
-									toast.promise(siteUpdate.updateNow.submit(), {
-										loading: 'Updating site...',
-										success: () => {
-											router.push({
-												name: 'Site Detail Jobs',
-												params: { name: site.name }
-											});
-
-											return 'Site update started';
-										},
-										error: 'Failed to update site'
-									});
-								}
-							},
-							{
-								label: 'View App Changes',
-								onClick() {
-									createListResource({
-										doctype: 'Deploy Candidate Difference App',
-										fields: [
-											'difference.github_diff_url as diff_url',
-											'app.title as app'
-										],
-										filters: {
-											parenttype: 'Deploy Candidate Difference',
-											parent: row.difference
-										},
-										auto: true,
-										pageLength: 99,
-										onSuccess(data) {
-											if (data?.length) {
-												renderDialog(
-													h(
-														GenericDialog,
-														{
-															options: {
-																title: 'Site update app changes'
-															}
-														},
-														{
-															default: () =>
-																h(ObjectList, {
-																	options: {
-																		data: () => data,
-																		columns: [
-																			{
-																				label: 'App',
-																				fieldname: 'app',
-																				width: 0.5
-																			},
-																			{
-																				label: 'App Changes',
-																				fieldname: 'diff_url',
-																				width: 0.5,
-																				type: 'Button',
-																				Button({ row }) {
-																					return {
-																						label: 'View App Changes',
-																						slots: {
-																							prefix: icon('github')
-																						},
-																						link: row.diff_url
-																					};
-																				}
-																			}
-																		]
-																	}
-																})
-														}
-													)
-												);
-											} else toast.error('No app changes found');
-										}
-									});
-								}
-							}
-						];
-					}
 				}
 			},
 			{
@@ -489,6 +346,11 @@ export default {
 														label: 'App',
 														fieldname: 'app',
 														fieldtype: 'ListSelection',
+														emptyStateMessage:
+															'No apps found' +
+															(!site.doc?.group_public
+																? '. Please add them from your bench.'
+																: ''),
 														columns: [
 															{
 																label: 'Title',
@@ -543,7 +405,7 @@ export default {
 																										return 'App will be installed shortly';
 																									},
 																									error: e => {
-																										return e.messages.length
+																										return e.messages?.length
 																											? e.messages.join('\n')
 																											: e.message;
 																									}
@@ -564,7 +426,7 @@ export default {
 																							return 'App will be installed shortly';
 																						},
 																						error: e => {
-																							return e.messages.length
+																							return e.messages?.length
 																								? e.messages.join('\n')
 																								: e.message;
 																						}
@@ -650,7 +512,7 @@ export default {
 													loading: 'Uninstalling app...',
 													success: () => 'App uninstalled successfully',
 													error: e => {
-														return e.messages.length
+														return e.messages?.length
 															? e.messages.join('\n')
 															: e.message;
 													}
@@ -739,7 +601,7 @@ export default {
 														return 'Domain removed';
 													},
 													error: e => {
-														return e.messages.length
+														return e.messages?.length
 															? e.messages.join('\n')
 															: e.message;
 													}
@@ -769,7 +631,7 @@ export default {
 														return 'Primary domain set';
 													},
 													error: e => {
-														return e.messages.length
+														return e.messages?.length
 															? e.messages.join('\n')
 															: e.message;
 													}
@@ -799,7 +661,7 @@ export default {
 														return 'Domain redirected';
 													},
 													error: e => {
-														return e.messages.length
+														return e.messages?.length
 															? e.messages.join('\n')
 															: e.message;
 													}
@@ -829,7 +691,7 @@ export default {
 														return 'Redirect removed';
 													},
 													error: e => {
-														return e.messages.length
+														return e.messages?.length
 															? e.messages.join('\n')
 															: e.message;
 													}
@@ -864,7 +726,11 @@ export default {
 						'public_url',
 						'private_url',
 						'config_file_url',
-						'site'
+						'site',
+						'remote_database_file',
+						'remote_public_file',
+						'remote_private_file',
+						'remote_config_file'
 					],
 					columns: [
 						{
@@ -956,33 +822,130 @@ export default {
 
 						return [
 							{
-								label: 'Download Database',
-								onClick() {
-									return downloadBackup(row, 'database');
-								}
+								group: 'Download',
+								items: [
+									{
+										label: 'Download Database',
+										onClick() {
+											return downloadBackup(row, 'database');
+										}
+									},
+									{
+										label: 'Download Public',
+										onClick() {
+											return downloadBackup(row, 'public');
+										},
+										condition: () => row.public_url
+									},
+									{
+										label: 'Download Private',
+										onClick() {
+											return downloadBackup(row, 'private');
+										},
+										condition: () => row.private_url
+									},
+									{
+										label: 'Download Config',
+										onClick() {
+											return downloadBackup(row, 'config');
+										},
+										condition: () => row.config_file_url
+									}
+								]
 							},
 							{
-								label: 'Download Public',
-								onClick() {
-									return downloadBackup(row, 'public');
-								},
-								condition: () => row.public_url
-							},
-							{
-								label: 'Download Private',
-								onClick() {
-									return downloadBackup(row, 'private');
-								},
-								condition: () => row.private_url
-							},
-							{
-								label: 'Download Config',
-								onClick() {
-									return downloadBackup(row, 'config');
-								},
-								condition: () => row.config_file_url
+								group: 'Restore',
+								condition: () => row.offsite,
+								items: [
+									{
+										label: 'Restore Backup',
+										onClick() {
+											confirmDialog({
+												title: 'Restore Backup',
+												message: `Are you sure you want to restore your site to this offsite backup from <b>${dayjs(
+													row.creation
+												).format('lll')}</b> ?`,
+												onSuccess({ hide }) {
+													toast.promise(
+														site.restoreSiteFromFiles.submit({
+															files: {
+																database: row.remote_database_file,
+																public: row.remote_public_file,
+																private: row.remote_private_file,
+																config: row.remote_config_file
+															}
+														}),
+														{
+															loading: 'Scheduling backup restore...',
+															success: restoreJobId => {
+																hide();
+																router.push({
+																	name: 'Site Job',
+																	params: {
+																		name: site.name,
+																		id: restoreJobId
+																	}
+																});
+																return 'Backup restore scheduled successfully.';
+															},
+															error: e => {
+																return e.messages?.length
+																	? e.messages.join('\n')
+																	: e.message;
+															}
+														}
+													);
+												}
+											});
+										}
+									},
+									{
+										label: 'Restore Backup on another Site',
+										onClick() {
+											let SelectSiteForRestore = defineAsyncComponent(() =>
+												import('../components/site/SelectSiteForRestore.vue')
+											);
+											renderDialog(
+												h(SelectSiteForRestore, {
+													site: site.name,
+													onRestore(siteName) {
+														return toast.promise(
+															frappeRequest({
+																url: 'press.api.site.restore',
+																params: {
+																	name: siteName,
+																	files: {
+																		database: row.remote_database_file,
+																		public: row.remote_public_file,
+																		private: row.remote_private_file,
+																		config: row.remote_config_file
+																	}
+																}
+															}),
+															{
+																loading: 'Scheduling backup restore...',
+																success: restoreJobId => {
+																	router.push({
+																		name: 'Site Job',
+																		params: { name: siteName, id: restoreJobId }
+																	});
+																	return 'Backup restore scheduled successfully.';
+																},
+																error: e => {
+																	return e.messages?.length
+																		? e.messages.join('\n')
+																		: e.message;
+																}
+															}
+														);
+													}
+												})
+											);
+										}
+									}
+								]
 							}
-						];
+						].filter(d => (d.condition ? d.condition() : true));
 					},
 					primaryAction({ listResource: backups, documentResource: site }) {
 						return {
@@ -992,20 +955,34 @@ export default {
 							},
 							loading: site.backup.loading,
 							onClick() {
-								return site.backup.submit(
-									{
-										with_files: true
-									},
-									{
-										onError(e) {
-											showErrorToast(e);
-										},
-										onSuccess() {
-											backups.reload();
-											toast.success('Backup scheduled');
-										}
+								confirmDialog({
+									title: 'Schedule Backup',
+									message:
+										'Are you sure you want to schedule a backup? This will create an onsite backup.',
+									onSuccess({ hide }) {
+										toast.promise(
+											site.backup.submit({
+												with_files: true
+											}),
+											{
+												loading: 'Scheduling backup...',
+												success: () => {
+													hide();
+													toast.success('Backup scheduled');
+													router.push({
+														name: 'Site Job',
+														params: { name: site.name }
+													});
+												},
+												error: e => {
+													return e.messages?.length
+														? e.messages.join('\n')
+														: e.message;
+												}
+											}
+										);
 									}
-								);
+								});
 							}
 						};
 					}
@@ -1129,7 +1106,7 @@ export default {
 													loading: 'Deleting config...',
 													success: () => `Config ${row.key} removed`,
 													error: e => {
-														return e.messages.length
+														return e.messages?.length
 															? e.messages.join('\n')
 															: e.message;
 													}
@@ -1145,12 +1122,218 @@ export default {
 			},
 			{
 				label: 'Actions',
-				icon: icon('activity'),
+				icon: icon('sliders'),
 				route: 'actions',
 				type: 'Component',
 				component: SiteActions,
 				props: site => {
 					return { site: site.doc.name };
+				}
+			},
+			{
+				label: 'Updates',
+				icon: icon('arrow-up-circle'),
+				route: 'updates',
+				type: 'list',
+				list: {
+					doctype: 'Site Update',
+					filters: site => {
+						return { site: site.doc.name };
+					},
+					orderBy: 'creation',
+					fields: ['difference', 'update_job.end as updated_on', 'update_job'],
+					columns: [
+						{
+							label: 'Type',
+							fieldname: 'deploy_type',
+							width: 0.3
+						},
+						{
+							label: 'Status',
+							fieldname: 'status',
+							type: 'Badge',
+							width: 0.5
+						},
+						{
+							label: 'Created By',
+							fieldname: 'owner'
+						},
+						{
+							label: 'Scheduled At',
+							fieldname: 'scheduled_time',
+							format(value) {
+								return date(value, 'lll');
+							}
+						},
+						{
+							label: 'Updated On',
+							fieldname: 'updated_on',
+							format(value) {
+								return date(value, 'lll');
+							}
+						}
+					],
+					rowActions({ row, documentResource: site }) {
+						return [
+							{
+								label: 'View Job',
+								onClick() {
+									router.push({
+										name: 'Site Job',
+										params: { name: site.name, id: row.update_job }
+									});
+								}
+							},
+							{
+								label: 'Update Now',
+								condition: () => row.status === 'Scheduled',
+								onClick() {
+									let siteUpdate = getDocResource({
+										doctype: 'Site Update',
+										name: row.name,
+										whitelistedMethods: {
+											updateNow: 'start'
+										}
+									});
+
+									toast.promise(siteUpdate.updateNow.submit(), {
+										loading: 'Updating site...',
+										success: () => {
+											router.push({
+												name: 'Site Detail Jobs',
+												params: { name: site.name }
+											});
+
+											return 'Site update started';
+										},
+										error: 'Failed to update site'
+									});
+								}
+							},
+							{
+								label: 'View App Changes',
+								onClick() {
+									createListResource({
+										doctype: 'Deploy Candidate Difference App',
+										fields: [
+											'difference.github_diff_url as diff_url',
+											'difference.source_hash as source_hash',
+											'difference.destination_hash as destination_hash',
+											'app.title as app'
+										],
+										filters: {
+											parenttype: 'Deploy Candidate Difference',
+											parent: row.difference
+										},
+										auto: true,
+										pageLength: 99,
+										onSuccess(data) {
+											if (data?.length) {
+												renderDialog(
+													h(
+														GenericDialog,
+														{
+															options: {
+																title: 'App Changes',
+																size: '2xl'
+															}
+														},
+														{
+															default: () =>
+																h(ObjectList, {
+																	options: {
+																		data: () => data,
+																		columns: [
+																			{
+																				label: 'App',
+																				fieldname: 'app'
+																			},
+																			{
+																				label: 'From',
+																				fieldname: 'source_hash',
+																				type: 'Button',
+																				Button({ row }) {
+																					return {
+																						label:
+																							row.source_tag ||
+																							row.source_hash.slice(0, 7),
+																						variant: 'ghost',
+																						class: 'font-mono',
+																						link: `${
+																							row.diff_url.split('/compare')[0]
+																						}/commit/${row.source_hash}`
+																					};
+																				}
+																			},
+																			{
+																				label: 'To',
+																				fieldname: 'destination_hash',
+																				type: 'Button',
+																				Button({ row }) {
+																					return {
+																						label:
+																							row.destination_tag ||
+																							row.destination_hash.slice(0, 7),
+																						variant: 'ghost',
+																						class: 'font-mono',
+																						link: `${
+																							row.diff_url.split('/compare')[0]
+																						}/commit/${row.destination_hash}`
+																					};
+																				}
+																			},
+																			{
+																				label: 'App Changes',
+																				fieldname: 'diff_url',
+																				align: 'right',
+																				type: 'Button',
+																				Button({ row }) {
+																					return {
+																						label: 'View',
+																						variant: 'ghost',
+																						slots: {
+																							prefix: icon('external-link')
+																						},
+																						link: row.diff_url
+																					};
+																				}
+																			}
+																		]
+																	}
+																})
+														}
+													)
+												);
+											} else toast.error('No app changes found');
+										}
+									});
+								}
+							}
+						];
+					},
+					actions({ documentResource: site }) {
+						if (site.doc.group_public) return [];
+
+						return [
+							{
+								label: 'Configure',
+								slots: {
+									prefix: icon('settings')
+								},
+								onClick() {
+									let ConfigureAutoUpdateDialog = defineAsyncComponent(() =>
+										import('../components/site/ConfigureAutoUpdateDialog.vue')
+									);
+
+									renderDialog(
+										h(ConfigureAutoUpdateDialog, {
+											site: site.doc.name
+										})
+									);
+								}
+							}
+						];
+					}
 				}
 			},
 			{
@@ -1239,6 +1422,7 @@ export default {
 					]
 				}
 			},
+			logsTab(),
 			{
 				label: 'Activity',
 				icon: icon('activity'),
@@ -1274,10 +1458,63 @@ export default {
 							type: 'Timestamp',
 							align: 'right'
 						}
-					]
+					],
+					primaryAction({ documentResource: site }) {
+						return {
+							label: 'Change Notification Email',
+							slots: {
+								prefix: icon('mail')
+							},
+							onClick: () => {
+								confirmDialog({
+									title: 'Change Notification Email',
+									fields: [
+										{
+											type: 'email',
+											label: 'Email',
+											fieldname: 'email',
+											default: site.doc.notify_email
+										}
+									],
+									onSuccess({ hide, values }) {
+										return site.setValue.submit(
+											{
+												notify_email: values.email
+											},
+											{
+												validate: doc => {
+													function validateEmail(email) {
+														const re = /\S+@\S+\.\S+/;
+														return re.test(email);
+													}
+
+													let email = doc?.fieldname?.notify_email;
+													if (!email) {
+														return 'Email is required';
+													} else if (!validateEmail(email)) {
+														return 'Enter a valid email address';
+													}
+												},
+												onSuccess() {
+													hide();
+													toast.success('Email updated successfully');
+												},
+												onError(e) {
+													throw new Error(
+														e.messages
+															? e.messages.join('\n')
+															: e.message || 'Error updating email'
+													);
+												}
+											}
+										);
+									}
+								});
+							}
+						};
+					}
 				}
 			},
-			logsTab(),
 			tagTab()
 		],
 		actions(context) {
@@ -1366,29 +1603,25 @@ export default {
 							}
 						},
 						{
-							label: 'Manage Bench',
-							icon: 'tool',
-							condition: () => site.doc?.group,
-							onClick: () => {
-								router.push(`/benches/${site.doc?.group}`);
-							}
-						},
-						{
 							label: 'Login As Administrator',
 							icon: 'external-link',
 							condition: () => site.doc.status === 'Active',
 							onClick: () => {
 								confirmDialog({
 									title: 'Login as Administrator',
-									fields: [
-										{
-											label: 'Reason',
-											type: 'textarea',
-											fieldname: 'reason'
-										}
-									],
+									message: `Are you sure you want to login as administrator on the site <b>${site.doc.name}</b>?`,
+									fields:
+										$team.name !== site.doc.team
+											? [
+													{
+														label: 'Reason',
+														type: 'textarea',
+														fieldname: 'reason'
+													}
+											  ]
+											: [],
 									onSuccess: ({ hide, values }) => {
-										if (!values.reason && $team.name != site.doc.team) {
+										if (!values.reason && $team.name !== site.doc.team) {
 											throw new Error('Reason is required');
 										}
 										return site.loginAsAdmin

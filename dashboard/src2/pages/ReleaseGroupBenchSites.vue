@@ -72,6 +72,7 @@ export default {
 					'name',
 					'status',
 					'bench',
+					'host_name',
 					'plan.plan_title as plan_title',
 					'plan.price_usd as price_usd',
 					'plan.price_inr as price_inr',
@@ -79,7 +80,7 @@ export default {
 					'cluster.title as cluster_title'
 				],
 				orderBy: 'creation desc, bench desc',
-				pageLength: 50,
+				pageLength: 99999,
 				transform(data) {
 					return this.groupSitesByBench(data);
 				},
@@ -91,18 +92,18 @@ export default {
 		listOptions() {
 			return {
 				list: this.$resources.sites,
-				groupHeader: ({ group }) => {
-					let options = this.benchOptions(group);
+				groupHeader: ({ group: bench }) => {
+					let options = this.benchOptions(bench);
 					let IconHash = icon('hash', 'w-3 h-3');
 					return (
 						<div class="flex items-center">
 							<div class="text-base font-medium leading-6 text-gray-900">
-								{group.group}
+								{bench.group}
 							</div>
-							{group.status != 'Active' ? (
-								<Badge class="ml-4" label={group.status} />
+							{bench.status != 'Active' ? (
+								<Badge class="ml-4" label={bench.status} />
 							) : null}
-							{group.has_app_patch_applied && (
+							{bench.has_app_patch_applied && (
 								<Tooltip text="Apps in this deploy have been patched">
 									<div class="ml-2 rounded bg-gray-100 p-1 text-gray-700">
 										<IconHash />
@@ -113,11 +114,16 @@ export default {
 						</div>
 					);
 				},
-				searchField: 'name',
+				emptyStateMessage: this.$releaseGroup.doc.deploy_information.last_deploy
+					? 'No sites found'
+					: 'Create a deploy first to start creating sites',
 				columns: [
 					{
 						label: 'Site',
-						fieldname: 'name',
+						fieldname: 'host_name',
+						format(value, row) {
+							return value || row.name;
+						},
 						prefix() {
 							return h('div', { class: 'ml-2 w-3.5 h-3.5' });
 						}
@@ -125,11 +131,13 @@ export default {
 					{
 						label: 'Status',
 						fieldname: 'status',
-						type: 'Badge'
+						type: 'Badge',
+						width: 0.5
 					},
 					{
 						label: 'Region',
 						fieldname: 'cluster_title',
+						width: 0.5,
 						prefix(row) {
 							if (row.cluster_title)
 								return h('img', {
@@ -141,13 +149,14 @@ export default {
 					},
 					{
 						label: 'Plan',
+						width: 0.5,
 						format(value, row) {
 							if (row.trial_end_date) {
 								return trialDays(row.trial_end_date);
 							}
 							let $team = getTeam();
 							if (row.price_usd > 0) {
-								let india = $team.doc.country == 'India';
+								let india = $team?.doc.country == 'India';
 								let formattedValue = userCurrency(
 									india ? row.price_inr : row.price_usd,
 									0
@@ -195,6 +204,7 @@ export default {
 						slots: {
 							prefix: icon('plus', 'w-4 h-4')
 						},
+						disabled: !this.$releaseGroup.doc?.deploy_information?.last_deploy,
 						route: {
 							name: 'Bench New Site',
 							params: { bench: this.releaseGroup }
@@ -266,7 +276,7 @@ export default {
 			return [
 				{
 					label: 'View in Desk',
-					condition: () => this.$team.doc.is_desk_user,
+					condition: () => this.$team?.doc.is_desk_user,
 					onClick: () =>
 						window.open(
 							`${window.location.protocol}//${window.location.host}/app/bench/${bench.name}`,
@@ -332,10 +342,10 @@ export default {
 									toast.promise(
 										this.$bench(bench.name).updateAllSites.submit(),
 										{
-											loading: 'Updating sites...',
+											loading: 'Scheduling updates for the sites...',
 											success: () => {
 												hide();
-												return 'Sites updated';
+												return 'Sites have been scheduled for update';
 											},
 											error: e => {
 												hide();
@@ -415,6 +425,34 @@ export default {
 							}
 						});
 					}
+				},
+				{
+					label: 'Archive Bench',
+					onClick: () => {
+						confirmDialog({
+							title: 'Archive Bench',
+							message: `Are you sure you want to archive the bench <b>${bench.name}</b>?`,
+							primaryAction: {
+								label: 'Archive',
+								variant: 'solid',
+								theme: 'red',
+								onClick: ({ hide }) => {
+									toast.promise(this.$bench(bench.name).archive.submit(), {
+										loading: 'Scheduling bench for archival...',
+										success: () => {
+											hide();
+											return 'Bench is scheduled for archival';
+										},
+										error: e => {
+											return e.messages.length
+												? e.messages.join('\n')
+												: e.message || 'Failed to archive bench';
+										}
+									});
+								}
+							}
+						});
+					}
 				}
 			];
 		},
@@ -425,6 +463,7 @@ export default {
 				whitelistedMethods: {
 					restart: 'restart',
 					rebuild: 'rebuild',
+					archive: 'archive',
 					updateAllSites: 'update_all_sites'
 				},
 				auto: false

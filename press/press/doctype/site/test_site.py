@@ -17,11 +17,9 @@ from press.press.doctype.app.test_app import create_test_app
 from press.press.doctype.database_server.test_database_server import (
 	create_test_database_server,
 )
-from press.press.doctype.proxy_server.test_proxy_server import create_test_proxy_server
 from press.press.doctype.release_group.test_release_group import (
 	create_test_release_group,
 )
-from press.press.doctype.server.test_server import create_test_server
 from press.press.doctype.site.site import Site, process_rename_site_job_update
 
 from press.press.doctype.remote_file.remote_file import RemoteFile
@@ -42,12 +40,17 @@ def create_test_bench(
 	group: ReleaseGroup = None,
 	server: str = None,
 	apps: Optional[list[dict]] = None,
+	creation: datetime = None,
 ) -> "Bench":
 	"""
 	Create test Bench doc.
 
 	API call to agent will be faked when creating the doc.
 	"""
+	from press.press.doctype.proxy_server.test_proxy_server import create_test_proxy_server
+	from press.press.doctype.server.test_server import create_test_server
+
+	creation = creation or frappe.utils.now_datetime()
 	user = user or frappe.session.user
 	if not server:
 		proxy_server = create_test_proxy_server()
@@ -74,15 +77,18 @@ def create_test_bench(
 			"server": server,
 		}
 	).insert(ignore_if_duplicate=True)
+	bench.db_set("creation", creation)
 	bench.reload()
 	return bench
 
 
+@patch.object(AgentJob, "enqueue_http_request", new=Mock())
 def create_test_site(
 	subdomain: str = "",
 	new: bool = False,
 	creation: datetime = None,
 	bench: str = None,
+	server: str = None,
 	team: str = None,
 	standby_for: Optional[str] = None,
 	apps: Optional[list[str]] = None,
@@ -90,6 +96,7 @@ def create_test_site(
 	remote_public_file=None,
 	remote_private_file=None,
 	remote_config_file=None,
+	backup_time=None,
 	**kwargs,
 ) -> Site:
 	"""Create test Site doc.
@@ -100,7 +107,7 @@ def create_test_site(
 	subdomain = subdomain or make_autoname("test-site-.#####")
 	apps = [{"app": app} for app in apps] if apps else None
 	if not bench:
-		bench = create_test_bench()
+		bench = create_test_bench(server=server)
 	else:
 		bench = frappe.get_doc("Bench", bench)
 	group = frappe.get_doc("Release Group", bench.group)
@@ -128,6 +135,7 @@ def create_test_site(
 	site.update(kwargs)
 	site.insert()
 	site.db_set("creation", creation)
+	site.db_set("backup_time", backup_time)
 	site.reload()
 	return site
 
