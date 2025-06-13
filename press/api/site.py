@@ -289,6 +289,9 @@ def validate_plan(server, plan):
 
 @frappe.whitelist()
 def new(site):
+	if not hasattr(site, "domain") or not site["domain"]:
+		site["domain"] = frappe.db.get_single_value("Press Settings", "domain")
+
 	return _new(site)
 
 
@@ -1741,7 +1744,7 @@ def check_dns_cname_a(name, domain, ignore_proxying=False):
 	proxy = check_domain_proxied(domain)
 	if proxy:
 		if ignore_proxying:  # no point checking the rest if proxied
-			return {"CNAME": {}, "A": {}, "matched": True}
+			return {"CNAME": {}, "A": {}, "matched": True, "type": "A"}  # assume A
 		frappe.throw(
 			f"Domain {domain} appears to be proxied (server: {proxy}). Please turn off proxying and try again in some time. You may enable it once the domain is verified.",
 			DomainProxied,

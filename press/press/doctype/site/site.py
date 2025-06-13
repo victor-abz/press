@@ -81,6 +81,7 @@ from press.utils import (
 	get_current_team,
 	guess_type,
 	human_readable,
+	is_list,
 	log_error,
 	unique,
 	validate_subdomain,
@@ -692,8 +693,8 @@ class Site(Document, TagHelpers):
 				Handle the old value for the `allow_cors` key
 				Previously it was of string type, now it is a JSON object.
 				"""
-				if row.key == "allow_cors" and row.value in ["", "*"]:
-					row.value = '["*"]' if row.value == "*" else "[]"
+				if row.key == "allow_cors" and not is_list(row.value):
+					row.value = json.dumps([row.value])
 				key_value = json.loads(cstr(row.value))
 			else:
 				key_value = row.value
@@ -1275,7 +1276,7 @@ class Site(Document, TagHelpers):
 				"domain": domain,
 				"dns_type": "CNAME",
 			}
-		).insert()
+		).insert(ignore_if_duplicate=True)
 
 	@frappe.whitelist()
 	def create_dns_record(self):
@@ -3637,13 +3638,8 @@ def process_install_app_site_job_update(job):
 
 	site_status = frappe.get_value("Site", job.site, "status")
 	if updated_status != site_status:
-		if job.status == "Success":
-			site = frappe.get_doc("Site", job.site)
-			app = json.loads(job.request_data).get("name")
-			app_doc = find(site.apps, lambda x: x.app == app)
-			if not app_doc:
-				site.append("apps", {"app": app})
-				site.save()
+		site: Site = frappe.get_doc("Site", job.site)
+		site.sync_apps()
 		frappe.db.set_value("Site", job.site, "status", updated_status)
 		create_site_status_update_webhook_event(job.site)
 
@@ -3659,13 +3655,8 @@ def process_uninstall_app_site_job_update(job):
 
 	site_status = frappe.get_value("Site", job.site, "status")
 	if updated_status != site_status:
-		if job.status == "Success":
-			site = frappe.get_doc("Site", job.site)
-			app = job.request_path.rsplit("/", 1)[-1]
-			app_doc = find(site.apps, lambda x: x.app == app)
-			if app_doc:
-				site.remove(app_doc)
-				site.save()
+		site: Site = frappe.get_doc("Site", job.site)
+		site.sync_apps()
 		frappe.db.set_value("Site", job.site, "status", updated_status)
 		create_site_status_update_webhook_event(job.site)
 
