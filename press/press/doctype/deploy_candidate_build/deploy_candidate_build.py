@@ -356,9 +356,7 @@ class DeployCandidateBuild(Document):
 
 		with open(conf_file, "w") as f:
 			content = frappe.render_template(
-				template.value,
-				{"doc": self.candidate},
-				is_path=True,
+				template.value, {"doc": self.candidate, "platform": self.platform}, is_path=True
 			)
 			f.write(content)
 
@@ -1226,6 +1224,14 @@ def fail_and_redeploy(dn: str):
 	build: DeployCandidateBuild = frappe.get_doc("Deploy Candidate Build", dn)
 
 	return build.redeploy()
+
+
+@frappe.whitelist()
+def fail_remote_job(dn: str):
+	agent_job: "AgentJob" = frappe.get_doc(
+		"Agent Job", {"reference_doctype": "Deploy Candidate Build", "reference_name": dn}
+	)
+	agent_job.cancel_job()
 
 
 def is_build_job(job: Job) -> bool:
