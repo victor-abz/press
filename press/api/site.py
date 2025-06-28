@@ -55,6 +55,7 @@ if TYPE_CHECKING:
 	from press.press.doctype.deploy_candidate_app.deploy_candidate_app import (
 		DeployCandidateApp,
 	)
+	from press.press.doctype.site.site import Site
 
 
 NAMESERVERS = ["1.1.1.1", "1.0.0.1", "8.8.8.8", "8.8.4.4"]
@@ -95,7 +96,8 @@ def protected(doctypes):
 			if owner == team or has_role("Press Support Agent"):
 				return wrapped(*args, **kwargs)
 
-		frappe.throw("Not Permitted", frappe.PermissionError)  # noqa: RET503
+		frappe.throw("Not Permitted", frappe.PermissionError)
+		return None
 
 	return wrapper
 
@@ -129,7 +131,7 @@ def get_name_from_filters(filters: dict):
 		return None
 
 	value = values[0]
-	if isinstance(value, (int, str)):
+	if isinstance(value, int | str):
 		return value
 
 	return None
@@ -289,6 +291,9 @@ def validate_plan(server, plan):
 
 @frappe.whitelist()
 def new(site):
+	if not hasattr(site, "domain") or not site["domain"]:
+		site["domain"] = frappe.db.get_single_value("Press Settings", "domain")
+
 	return _new(site)
 
 
@@ -1587,7 +1592,7 @@ def restore(name, files, skip_failing_patches=False):
 			"remote_config_file": files.get("config", ""),
 		},
 	)
-	site = frappe.get_doc("Site", name)
+	site: Site = frappe.get_doc("Site", name)
 	return site.restore_site(skip_failing_patches=skip_failing_patches)
 
 
@@ -1639,7 +1644,10 @@ def check_dns_cname(name, domain):
 			raise MultipleCNAMERecords
 		mapped_domain = answer[0].to_text().rsplit(".", 1)[0]
 		result["answer"] = answer.rrset.to_text()
-		if mapped_domain == name:
+		other_domains = frappe.db.get_all(
+			"Site Domain", {"site": name, "status": "Active", "domain": ("!=", name)}, pluck="domain"
+		)
+		if mapped_domain == name or mapped_domain in other_domains:
 			result["matched"] = True
 	except MultipleCNAMERecords:
 		multiple_domains = ", ".join(part.to_text() for part in answer)
@@ -1741,7 +1749,7 @@ def check_dns_cname_a(name, domain, ignore_proxying=False):
 	proxy = check_domain_proxied(domain)
 	if proxy:
 		if ignore_proxying:  # no point checking the rest if proxied
-			return {"CNAME": {}, "A": {}, "matched": True}
+			return {"CNAME": {}, "A": {}, "matched": True, "type": "A"}  # assume A
 		frappe.throw(
 			f"Domain {domain} appears to be proxied (server: {proxy}). Please turn off proxying and try again in some time. You may enable it once the domain is verified.",
 			DomainProxied,
