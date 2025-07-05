@@ -12,6 +12,7 @@ from functools import cached_property
 
 import boto3
 import frappe
+import semantic_version
 from frappe import _
 from frappe.core.utils import find, find_all
 from frappe.installer import subprocess
@@ -24,6 +25,7 @@ from press.agent import Agent
 from press.api.client import dashboard_whitelist
 from press.exceptions import VolumeResizeLimitError
 from press.overrides import get_permission_query_conditions_for_doctype
+from press.press.doctype.ansible_console.ansible_console import AnsibleAdHoc
 from press.press.doctype.resource_tag.tag_helpers import TagHelpers
 from press.runner import Ansible
 from press.telegram_utils import Telegram
@@ -33,7 +35,10 @@ if typing.TYPE_CHECKING:
 	from press.infrastructure.doctype.arm_build_record.arm_build_record import ARMBuildRecord
 	from press.press.doctype.ansible_play.ansible_play import AnsiblePlay
 	from press.press.doctype.bench.bench import Bench
+	from press.press.doctype.database_server.database_server import DatabaseServer
+	from press.press.doctype.mariadb_variable.mariadb_variable import MariaDBVariable
 	from press.press.doctype.release_group.release_group import ReleaseGroup
+	from press.press.doctype.server_mount.server_mount import ServerMount
 	from press.press.doctype.virtual_machine.virtual_machine import VirtualMachine
 
 from typing import Literal, TypedDict
@@ -292,7 +297,6 @@ class BaseServer(Document, TagHelpers):
 		if not self.public:
 			frappe.throw("Action only allowed for public servers")
 
-		self.add_server_to_public_groups()
 		server = self.get_server_enabled_for_new_benches_and_sites()
 
 		if server:
@@ -634,11 +638,11 @@ class BaseServer(Document, TagHelpers):
 			self.reboot()
 
 	def guess_data_disk_mountpoint(self) -> str:
-		if not self.has_data_volume:
+		if not hasattr(self, "has_data_volume") or not self.has_data_volume:
 			return "/"
 
 		volumes = self.get_volume_mounts()
-		if volumes:
+		if volumes or self.has_data_volume:
 			if self.doctype == "Server":
 				mountpoint = "/opt/volumes/benches"
 			elif self.doctype == "Database Server":
@@ -720,7 +724,7 @@ class BaseServer(Document, TagHelpers):
 			{
 				"document_type": self.doctype,
 				"document_name": self.name,
-				"team": self.team,
+				"team": self.team or "team@erpnext.com",
 				"plan_type": plan_type,
 				"plan": plan,
 			},
@@ -759,13 +763,17 @@ class BaseServer(Document, TagHelpers):
 			filters={"server": self.name, "status": ("!=", "Archived")},
 			ignore_ifnull=True,
 		):
-			frappe.throw(_("Cannot archive server with sites"))
+			frappe.throw(
+				_("Cannot archive server with sites. Please drop them from their respective dashboards.")
+			)
 		if frappe.get_all(
 			"Bench",
 			filters={"server": self.name, "status": ("!=", "Archived")},
 			ignore_ifnull=True,
 		):
-			frappe.throw(_("Cannot archive server with benches"))
+			frappe.throw(
+				_("Cannot archive server with benches. Please drop them from their respective dashboards.")
+			)
 		self.status = "Pending"
 		self.save()
 		if self.is_self_hosted:
@@ -1234,9 +1242,27 @@ class BaseServer(Document, TagHelpers):
 			"bench": bench_info["name"],
 		}
 
+	def _get_dependency_version(self, candidate: str, dependency: str) -> str:
+		return frappe.get_value(
+			"Deploy Candidate Dependency",
+			{"parent": candidate, "dependency": dependency},
+			"version",
+		)
+
 	@frappe.whitelist()
 	def collect_arm_images(self) -> str:
 		"""Collect arm build images of all active benches on VM"""
+		# Need to disable all further deployments before collecting arm images.
+
+		def _parse_semantic_version(version_str: str) -> semantic_version.Version:
+			try:
+				return semantic_version.Version(version_str)
+			except ValueError:
+				return semantic_version.Version(f"{version_str}.0")
+
+		frappe.db.set_value("Server", self.name, "stop_deployments", 1)
+		frappe.db.commit()
+
 		benches = frappe.get_all(
 			"Bench",
 			{"server": self.name, "status": "Active"},
@@ -1245,6 +1271,24 @@ class BaseServer(Document, TagHelpers):
 
 		if not benches:
 			frappe.throw(f"No active benches found on <a href='/app/server/{self.name}'> Server")
+
+		for bench in benches:
+			raw_bench_version = self._get_dependency_version(bench["candidate"], "BENCH_VERSION")
+			raw_python_version = self._get_dependency_version(bench["candidate"], "PYTHON_VERSION")
+			bench_version = _parse_semantic_version(raw_bench_version)
+			python_version = _parse_semantic_version(raw_python_version)
+
+			if python_version > semantic_version.Version(
+				"3.8.0"
+			) and bench_version < semantic_version.Version("5.25.1"):
+				frappe.db.set_value(
+					"Deploy Candidate Dependency",
+					{"parent": bench["candidate"], "dependency": "BENCH_VERSION"},
+					"version",
+					"5.25.1",
+				)
+
+		frappe.db.commit()
 
 		arm_build_record: ARMBuildRecord = frappe.new_doc("ARM Build Record", server=self.name)
 
@@ -1256,8 +1300,7 @@ class BaseServer(Document, TagHelpers):
 
 	@frappe.whitelist()
 	def start_active_benches(self):
-		arm_build_record: ARMBuildRecord = frappe.get_last_doc("ARM Build Record", {"server": self.name})
-		benches = [image.bench for image in arm_build_record.arm_images]
+		benches = frappe.get_all("Bench", {"server": self.name, "status": "Active"}, pluck="name")
 		frappe.enqueue_doc(self.doctype, self.name, "_start_active_benches", benches=benches)
 
 	def _start_active_benches(self, benches: list[str]):
@@ -1498,6 +1541,32 @@ node_filesystem_avail_bytes{{instance="{self.name}", mountpoint="{mountpoint}"}}
 		except Exception:
 			log_error("Sever File Copy Exception", server=self.as_dict())
 
+	@frappe.whitelist()
+	def set_additional_config(self: Server | DatabaseServer):
+		"""
+		Corresponds to Set additional config step in Create Server Press Job
+		"""
+		if self.doctype == "Database Server":
+			default_variables = frappe.get_all("MariaDB Variable", {"set_on_new_servers": 1}, pluck="name")
+			for var_name in default_variables:
+				var: MariaDBVariable = frappe.get_doc("MariaDB Variable", var_name)
+				var.set_on_server(self)
+
+		self.set_swappiness()
+		self.add_glass_file()
+		self.install_filebeat()
+
+		if self.doctype == "Server":
+			self.setup_mysqldump()
+			self.install_earlyoom()
+
+		if self.doctype == "Database Server":
+			self.adjust_memory_config()
+			self.setup_logrotate()
+
+		self.validate_mounts()
+		self.save(ignore_permissions=True)
+
 
 class Server(BaseServer):
 	# begin: auto-generated types
@@ -1712,6 +1781,10 @@ class Server(BaseServer):
 	def add_upstream_to_proxy(self):
 		agent = Agent(self.proxy_server, server_type="Proxy Server")
 		agent.new_server(self.name)
+
+	def ansible_run(self, command: str) -> dict[str, str]:
+		inventory = f"{self.ip},"
+		return AnsibleAdHoc(sources=inventory).run(command, self.name)[0]
 
 	def _setup_server(self):
 		agent_password = self.get_password("agent_password")
@@ -1973,11 +2046,6 @@ class Server(BaseServer):
 			ansible.run()
 		except Exception:
 			log_error("Exporters Install Exception", server=self.as_dict())
-
-	@classmethod
-	def get_all_prod(cls, **kwargs) -> list[str]:
-		"""Active prod servers."""
-		return frappe.get_all("Server", {"status": "Active"}, pluck="name", **kwargs)
 
 	@classmethod
 	def get_all_primary_prod(cls) -> list[str]:

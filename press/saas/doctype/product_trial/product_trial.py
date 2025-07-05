@@ -207,12 +207,19 @@ class ProductTrial(Document):
 		if cluster:
 			filters["cluster"] = cluster
 
-		for rule in self.hybrid_pool_rules:
-			value = (
-				frappe.db.get_value("Account Request", account_request, rule.field)
-				if account_request
-				else None
+		fields = [rule.field for rule in self.hybrid_pool_rules]
+		acc_req = (
+			frappe.db.get_value(
+				"Account Request",
+				account_request,
+				fields,
+				as_dict=True,
 			)
+			if account_request
+			else None
+		)
+		for rule in self.hybrid_pool_rules:
+			value = acc_req.get(rule.field) if acc_req else None
 			if not value:
 				break
 
@@ -232,9 +239,6 @@ class ProductTrial(Document):
 		if cluster and account_request:
 			# if site is not found and account request was specified, try to find a site in any cluster
 			return self.get_standby_site(None, account_request)
-		if cluster:
-			# if site is not found and cluster was specified, try to find a site in any cluster
-			return self.get_standby_site()
 		return None
 
 	def create_standby_sites_in_each_cluster(self):
